@@ -13,7 +13,9 @@ export async function downloadRateGraphic() {
       pixelRatio: 2,
       cacheBust: true,
       backgroundColor: '#020b20',
+      skipFonts: true,
       style: { transform: 'none', margin: '0' },
+      filter: (node) => !(node instanceof HTMLElement && node.dataset.captureHide === 'true'),
     });
     const link = document.createElement('a');
     link.download = `bitjhoins-tasa-del-dia-${new Date().toISOString().slice(0, 10)}.png`;

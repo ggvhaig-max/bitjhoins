@@ -138,7 +138,7 @@ export function PublicRates() {
           <Logo size="lg" />
         </div>
         <section className="relative overflow-hidden rounded-[1.6rem] border border-electric-400/20 bg-[radial-gradient(circle_at_72%_10%,rgba(0,144,240,0.28),transparent_30%),linear-gradient(135deg,#020819,#001b46_58%,#001039)]">
-          <div className="absolute inset-0 opacity-20 [background-image:radial-gradient(#1aa8ff_1px,transparent_1px)] [background-size:18px_18px]" />
+          <div data-capture-hide="true" className="absolute inset-0 opacity-20 [background-image:radial-gradient(#1aa8ff_1px,transparent_1px)] [background-size:18px_18px]" />
           <div className="relative grid items-center gap-8 pb-6 pt-8 lg:grid-cols-[1.12fr_0.88fr] lg:gap-10 lg:pt-12">
             <div className="pointer-events-none absolute -right-20 top-0 hidden h-[27rem] w-[33rem] overflow-hidden rounded-[3rem] opacity-35 mix-blend-screen lg:block" aria-hidden="true">
               <img src="/images/image copy.png" alt="" className="h-full w-full scale-[1.7] object-cover object-[85%_13%] blur-[0.4px]" />

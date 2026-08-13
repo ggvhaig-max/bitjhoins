@@ -12,6 +12,7 @@ import { useAuth } from '@/context/AuthContext';
 type Step = 'customer' | 'beneficiary' | 'review' | 'payment' | 'tracking' | 'completed';
 
 const PAYMENT_MINUTES = 30;
+const DEFAULT_WHATSAPP_NUMBER = '573024629142';
 
 const STATUS_FLOW: { status: OrderStatus; label: string }[] = [
   { status: 'CREATED', label: 'Solicitud recibida' },
@@ -646,6 +647,7 @@ function PaymentStep({ order, onUploaded, onCancel }: {
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(true);
+  const [whatsappNumber, setWhatsappNumber] = useState(DEFAULT_WHATSAPP_NUMBER);
 
   useEffect(() => {
     const loadAccounts = async () => {
@@ -660,6 +662,14 @@ function PaymentStep({ order, onUploaded, onCancel }: {
     };
     void loadAccounts();
   }, [order.source_currency]);
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      const { data } = await supabase.from('site_settings').select('whatsapp_number').eq('id', 'main').maybeSingle();
+      if (data?.whatsapp_number) setWhatsappNumber(data.whatsapp_number);
+    };
+    void loadSettings();
+  }, []);
 
   useEffect(() => {
     if (!order.expires_at) return;
@@ -729,8 +739,16 @@ function PaymentStep({ order, onUploaded, onCancel }: {
         {accountsLoading ? (
           <div className="flex justify-center py-5"><Loader2 size={22} className="animate-spin text-electric-400" /></div>
         ) : accounts.length === 0 ? (
-          <div className="rounded-xl border border-gold-400/30 bg-gold-400/10 px-4 py-3 text-sm text-gold-200">
-            Aún no hay cuentas habilitadas para {order.source_currency}. Contacta a un asesor antes de pagar.
+          <div className="rounded-xl border border-gold-400/30 bg-gold-400/10 px-4 py-3">
+            <p className="text-sm text-gold-200">Aún no hay cuentas habilitadas para {order.source_currency}. Contacta a un asesor antes de pagar.</p>
+            <a
+              href={`https://wa.me/${whatsappNumber}?text=${encodeURIComponent(`Hola, quiero pagar mi orden ${order.order_number} en ${order.source_currency} pero no veo cuentas disponibles.`)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-primary mt-3 w-full sm:w-auto"
+            >
+              <MessageCircle size={18} /> Contactar asesor por WhatsApp
+            </a>
           </div>
         ) : (
           <div className="space-y-3">
