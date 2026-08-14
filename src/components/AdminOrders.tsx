@@ -84,8 +84,8 @@ export function AdminOrders() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
-  const loadOrders = useCallback(async () => {
-    setLoading(true);
+  const loadOrders = useCallback(async (isInitialLoad = false) => {
+    if (isInitialLoad) setLoading(true);
     const { data: orderData, error: orderError } = await supabase
       .from('orders')
       .select('*')
@@ -122,7 +122,7 @@ export function AdminOrders() {
   }, []);
 
   useEffect(() => {
-    void loadOrders();
+    void loadOrders(true);
 
     const channel = supabase
       .channel('admin-orders')
@@ -196,12 +196,14 @@ export function AdminOrders() {
     setActionLoading(true);
     const updates: Record<string, unknown> = { status };
     if (status === 'COMPLETED') updates.admin_confirmed_at = new Date().toISOString();
-    await supabase.from('orders').update(updates).eq('id', orderId);
-    void loadOrders();
+    const { error } = await supabase.from('orders').update(updates).eq('id', orderId);
+    setActionLoading(false);
+    if (error) return;
+    // La suscripción de tiempo real a "orders" ya dispara loadOrders() con este mismo cambio;
+    // llamarlo aquí también duplicaba el refresco y hacía parpadear la lista.
     setSelectedOrder((prev) => prev ? { ...prev, status } : null);
     const order = orders.find((o) => o.id === orderId);
     if (order) await sendNotification({ ...order, status }, NOTIFICATION_TYPES[status]);
-    setActionLoading(false);
   };
 
   const handleUploadProof = async (orderId: string) => {
