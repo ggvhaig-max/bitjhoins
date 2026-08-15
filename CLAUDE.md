@@ -1,5 +1,18 @@
 # BitJhoins — Cambio de divisas
 
+## Supabase
+
+- **Proyecto:** `agsapmcfwzudkyfmtifi`
+- Servidor propio: esta app **no** está en el consolidado.
+
+**OJO — el error que más tiempo cuesta:** los servidores viejos
+(`qzsxynppfyjciffxphat` de e-Comercio y `ymvhxbxyowhbvvxpyfmn` del CRM)
+siguen encendidos y responden a las consultas. Si algo "no aparece" en la
+base o si sale "no tienes permiso", revisar primero a **cuál** servidor se le
+está preguntando. La verdad está en el `.env` del proyecto, no en la memoria
+ni en la documentación vieja.
+
+
 App **Vite + React + TypeScript + Supabase** (SPA), NO estática.
 
 ## Estructura
