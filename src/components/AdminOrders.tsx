@@ -126,10 +126,10 @@ export function AdminOrders() {
 
     const channel = supabase
       .channel('admin-orders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'bitjhoins', table: 'orders' }, () => {
         void loadOrders();
       })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_status_history' }, () => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'bitjhoins', table: 'order_status_history' }, () => {
         void loadOrders();
       })
       .subscribe();
@@ -156,7 +156,7 @@ export function AdminOrders() {
 
     const msgChannel = supabase
       .channel(`admin-msgs-${selectedOrder.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_messages', filter: `order_id=eq.${selectedOrder.id}` }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'bitjhoins', table: 'order_messages', filter: `order_id=eq.${selectedOrder.id}` }, (payload) => {
         setMessages((prev) => [...prev, payload.new as OrderMessage]);
       })
       .subscribe();
@@ -168,14 +168,8 @@ export function AdminOrders() {
     const customer = order.customers;
     if (!customer) return;
     try {
-      const fnUrl = `${import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.VITE_PUBLIC_SUPABASE_URL}/functions/v1/whatsapp-notify`;
-      await fetch(fnUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({
+      await supabase.rpc('whatsapp_notify', {
+        payload: {
           type,
           order_id: order.id,
           order_number: order.order_number,
@@ -185,7 +179,7 @@ export function AdminOrders() {
           source_currency: order.source_currency,
           dest_currency: order.destination_currency,
           message_text: extraMessage,
-        }),
+        },
       });
     } catch {
       // notifications are best-effort
@@ -211,9 +205,9 @@ export function AdminOrders() {
     setUploadingProof(true);
     const ext = proofFile.name.split('.').pop()?.toLowerCase() ?? 'png';
     const path = `proofs/${orderId}-admin-${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from('payment-proofs').upload(path, proofFile, { contentType: proofFile.type, upsert: false });
+    const { error: upErr } = await supabase.storage.from('bj-payment-proofs').upload(path, proofFile, { contentType: proofFile.type, upsert: false });
     if (upErr) { setUploadingProof(false); return; }
-    const { data } = supabase.storage.from('payment-proofs').getPublicUrl(path);
+    const { data } = supabase.storage.from('bj-payment-proofs').getPublicUrl(path);
     await supabase.from('orders').update({ payment_proof_url: data.publicUrl }).eq('id', orderId);
     setUploadingProof(false);
     setProofFile(null);
@@ -226,9 +220,9 @@ export function AdminOrders() {
     setUploadingAdminProof(true);
     const ext = adminProofFile.name.split('.').pop()?.toLowerCase() ?? 'png';
     const path = `proofs/${orderId}-transfer-${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from('payment-proofs').upload(path, adminProofFile, { contentType: adminProofFile.type, upsert: false });
+    const { error: upErr } = await supabase.storage.from('bj-payment-proofs').upload(path, adminProofFile, { contentType: adminProofFile.type, upsert: false });
     if (upErr) { setUploadingAdminProof(false); return; }
-    const { data } = supabase.storage.from('payment-proofs').getPublicUrl(path);
+    const { data } = supabase.storage.from('bj-payment-proofs').getPublicUrl(path);
     await supabase.from('orders').update({ admin_proof_url: data.publicUrl }).eq('id', orderId);
     setUploadingAdminProof(false);
     setAdminProofFile(null);

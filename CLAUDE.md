@@ -2,8 +2,11 @@
 
 ## Supabase
 
-- **Proyecto:** `agsapmcfwzudkyfmtifi`
-- Servidor propio: esta app **no** está en el consolidado.
+- **Proyecto:** `jkbahenaqcoxmtddpfbg` (el servidor consolidado "todo"), **schema `bitjhoins`** — migrada el 24-ago-2026 desde `agsapmcfwzudkyfmtifi` (se perdió el acceso al panel de esa cuenta de Bolt; el servidor viejo sigue vivo y su respaldo de llaves quedó en `.env.viejo-agsap`).
+- El cliente usa `db: { schema: 'bitjhoins' }` y los canales realtime `schema: 'bitjhoins'` — NO quitar.
+- Buckets: `bj-sponsor-banners` y `bj-payment-proofs` (los nombres sin `bj-` chocan con el CRM).
+- Las 3 edge functions viejas se reemplazaron por RPCs SQL: `whatsapp_notify(payload)`, y el alta de usuarios va por `auth.signUp` con `app_origin='bitjhoins'` (para que los triggers de las otras apps lo ignoren) + rol elevado con `admin_update_user_role`.
+- Tasas automáticas: cron `bitjhoins-binance-daily-9am-vzla` (9:00 a.m. hora Venezuela = 13:00 UTC, diario) consulta Binance P2P con la extensión `http` y recalcula/publica las tasas AUTOMATIC. Verificado funcionando.
 
 **OJO — el error que más tiempo cuesta:** los servidores viejos
 (`qzsxynppfyjciffxphat` de e-Comercio y `ymvhxbxyowhbvvxpyfmn` del CRM)

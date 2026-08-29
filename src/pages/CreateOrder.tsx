@@ -189,8 +189,8 @@ export function CreateOrder() {
                 setStep('payment');
 
                 // Fire-and-forget notification
-                void supabase.functions.invoke('whatsapp-notify', {
-                  body: {
+                void supabase.rpc('whatsapp_notify', {
+                  payload: {
                     type: 'order_created',
                     order_id: (orderData as Order).id,
                     order_number: orderNumber,
@@ -692,13 +692,13 @@ function PaymentStep({ order, onUploaded, onCancel }: {
     setError(null);
     const ext = file.name.split('.').pop()?.toLowerCase() ?? 'png';
     const path = `proofs/${order.id}-${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from('payment-proofs').upload(path, file, { contentType: file.type, upsert: false });
+    const { error: upErr } = await supabase.storage.from('bj-payment-proofs').upload(path, file, { contentType: file.type, upsert: false });
     if (upErr) {
       setUploading(false);
       setError('No se pudo subir el comprobante. Inténtalo nuevamente.');
       return;
     }
-    const { data } = supabase.storage.from('payment-proofs').getPublicUrl(path);
+    const { data } = supabase.storage.from('bj-payment-proofs').getPublicUrl(path);
     const url = data.publicUrl;
 
     const { error: updErr } = await supabase.from('orders').update({ payment_proof_url: url, status: 'PAYMENT_REPORTED' }).eq('id', order.id);
@@ -842,17 +842,17 @@ function TrackingStep({ order, onCompleted }: { order: Order; onCompleted: (o: O
 
     const channel = supabase
       .channel(`order-${order.id}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${order.id}` }, (payload) => {
+      .on('postgres_changes', { event: 'UPDATE', schema: 'bitjhoins', table: 'orders', filter: `id=eq.${order.id}` }, (payload) => {
         const updated = payload.new as Order;
         setCurrentOrder(updated);
         setHistory((prev) => prev.some((h) => h.status === updated.status) ? prev : [...prev, { status: updated.status, created_at: new Date().toISOString() }]);
         if (updated.status === 'COMPLETED') onCompleted(updated);
       })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_status_history', filter: `order_id=eq.${order.id}` }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'bitjhoins', table: 'order_status_history', filter: `order_id=eq.${order.id}` }, (payload) => {
         const entry = payload.new as { status: OrderStatus; created_at: string };
         setHistory((prev) => prev.some((h) => h.status === entry.status) ? prev : [...prev, entry]);
       })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_messages', filter: `order_id=eq.${order.id}` }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'bitjhoins', table: 'order_messages', filter: `order_id=eq.${order.id}` }, (payload) => {
         setMessages((prev) => [...prev, payload.new as OrderMessage]);
       })
       .subscribe();

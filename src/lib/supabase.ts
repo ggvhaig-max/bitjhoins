@@ -8,6 +8,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
   },
+  // BitJhoins vive en su propio schema dentro del servidor consolidado "todo"
+  db: { schema: 'bitjhoins' },
 });
 
 export type UserRole = 'superadmin' | 'admin' | 'user';
@@ -26,6 +28,10 @@ export type SiteSettings = {
   whatsapp_number: string;
   published_date: string;
   updated_at: string;
+  /** Logo real del negocio, subido desde el panel (bucket `bj-brand`). */
+  logo_url: string | null;
+  /** Diseño guardado de la imagen para compartir (ver ShareStory). */
+  share_design: Record<string, unknown> | null;
 };
 
 export type ExchangeRate = {
@@ -39,11 +45,21 @@ export type ExchangeRate = {
   usdt_base_price: number | null;
   currency_reference_price: number | null;
   margin_percentage: number | null;
+  auto_base_currency: string | null;
+  auto_quote_currency: string | null;
   decimals: number;
   active: boolean;
   display_order: number;
   published_at: string | null;
   created_at: string;
+  updated_at: string;
+};
+
+export type UsdtReferencePrice = {
+  currency_code: string;
+  display_name: string;
+  usdt_price: number;
+  auto_update: boolean;
   updated_at: string;
 };
 

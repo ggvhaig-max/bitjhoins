@@ -73,7 +73,7 @@ export function CustomerOrders() {
 
       const channel = supabase
         .channel('customer-orders')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `customer_id=eq.${customer.id}` }, async () => {
+        .on('postgres_changes', { event: '*', schema: 'bitjhoins', table: 'orders', filter: `customer_id=eq.${customer.id}` }, async () => {
           const { data: refreshed } = await supabase.from('orders').select('*').eq('customer_id', customer.id).order('created_at', { ascending: false });
           setOrders((refreshed as Order[]) ?? []);
         })
@@ -98,10 +98,10 @@ export function CustomerOrders() {
 
     const channel = supabase
       .channel(`cust-order-${selectedOrder.id}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${selectedOrder.id}` }, (payload) => {
+      .on('postgres_changes', { event: 'UPDATE', schema: 'bitjhoins', table: 'orders', filter: `id=eq.${selectedOrder.id}` }, (payload) => {
         setSelectedOrder(payload.new as Order);
       })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_messages', filter: `order_id=eq.${selectedOrder.id}` }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'bitjhoins', table: 'order_messages', filter: `order_id=eq.${selectedOrder.id}` }, (payload) => {
         setMessages((prev) => [...prev, payload.new as OrderMessage]);
       })
       .subscribe();

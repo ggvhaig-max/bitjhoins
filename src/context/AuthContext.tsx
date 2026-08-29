@@ -55,26 +55,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string, displayName: string) => {
     try {
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/customer-create-user`;
-      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${anonKey}`,
-          apikey: anonKey,
-        },
-        body: JSON.stringify({ email, password, display_name: displayName }),
+      // app_origin identifica al usuario como de BitJhoins en el auth compartido
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { display_name: displayName, app_origin: 'bitjhoins' } },
       });
-      const data = await res.json();
-      if (!res.ok) {
-        return { error: (data?.error as string) ?? 'No se pudo crear la cuenta.' };
+      if (error || !data.user) {
+        const msg = error?.message ?? '';
+        if (msg.includes('already') || msg.includes('registered')) {
+          return { error: 'Ya existe una cuenta con ese correo.' };
+        }
+        return { error: 'No se pudo crear la cuenta.' };
       }
-      // Account created and pre-confirmed — sign in immediately
-      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInError) {
-        return { error: 'Cuenta creada. Inicia sesión para continuar.' };
+      // El servidor auto-confirma el correo; asegurar sesión y crear el perfil
+      if (!data.session) {
+        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) return { error: 'Cuenta creada. Inicia sesión para continuar.' };
       }
+      await supabase.from('user_profiles').insert({
+        user_id: data.user.id,
+        email: email.trim().toLowerCase(),
+        display_name: displayName.trim(),
+        role: 'user',
+      });
       return { error: null };
     } catch {
       return { error: 'No se pudo crear la cuenta. Intenta de nuevo.' };

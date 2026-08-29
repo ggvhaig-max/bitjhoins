@@ -2,17 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Loader2, Save, Upload, ArrowUp, ArrowDown, Power, History,
   X, Calculator, Check, Clock, RefreshCw, LogOut, Eye, ImagePlus, Megaphone, ExternalLink,
-  TrendingUp, ClipboardList, Users, Landmark, Settings,
+  TrendingUp, ClipboardList, Users, Landmark, Settings, Coins, Plus, Share2,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { supabase, type ExchangeRate, type RateHistoryEntry, type SiteSettings, type UserProfile, type UserRole, type Sponsor } from '@/lib/supabase';
+import { supabase, type ExchangeRate, type RateHistoryEntry, type SiteSettings, type UserProfile, type UserRole, type Sponsor, type UsdtReferencePrice } from '@/lib/supabase';
 import { formatNumber, formatDate, timeAgo } from '@/lib/format';
 import { Logo } from '@/components/Logo';
 import { RateGraphic } from '@/components/RateGraphic';
 import { AdminOrders } from '@/components/AdminOrders';
 import { AdminPaymentAccounts } from '@/components/AdminPaymentAccounts';
 import { AdminCustomers } from '@/components/AdminCustomers';
+import { ShareStory } from '@/components/ShareStory';
 
 type EditState = Record<string, Partial<ExchangeRate>>;
 
@@ -44,7 +45,19 @@ export function AdminDashboard() {
   const [sponsorMsg, setSponsorMsg] = useState<string | null>(null);
   const [savingSponsor, setSavingSponsor] = useState(false);
   const [sponsorsLoading, setSponsorsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'rates' | 'orders' | 'customers' | 'accounts' | 'config'>('rates');
+  const [activeTab, setActiveTab] = useState<'rates' | 'share' | 'orders' | 'customers' | 'accounts' | 'config'>('rates');
+  const [refPrices, setRefPrices] = useState<UsdtReferencePrice[]>([]);
+  const [refEdits, setRefEdits] = useState<Record<string, string>>({});
+  const [refsMissing, setRefsMissing] = useState(false);
+  const [savingRefs, setSavingRefs] = useState(false);
+  const [refMsg, setRefMsg] = useState<string | null>(null);
+  const [newRef, setNewRef] = useState({ code: '', name: '', price: '' });
+  const [schedule, setSchedule] = useState<{ mode: string; hour_vzla?: number; minute?: number } | null>(null);
+  const [schedEdit, setSchedEdit] = useState({ mode: 'daily', hour: 9, minute: 0 });
+  const [savingSched, setSavingSched] = useState(false);
+  const [schedMsg, setSchedMsg] = useState<string | null>(null);
+  const [marginEdits, setMarginEdits] = useState<Record<string, string>>({});
+  const [savingMargins, setSavingMargins] = useState(false);
 
   const handleSponsorFile = (file: File | null) => {
     if (!file) { setSponsorFile(null); setSponsorPreview(null); return; }
@@ -58,19 +71,27 @@ export function AdminDashboard() {
   const uploadSponsorImage = async (file: File): Promise<string | null> => {
     const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
     const path = `banners/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const { error } = await supabase.storage.from('sponsor-banners').upload(path, file, { contentType: file.type, upsert: false });
+    const { error } = await supabase.storage.from('bj-sponsor-banners').upload(path, file, { contentType: file.type, upsert: false });
     if (error) return null;
-    const { data } = supabase.storage.from('sponsor-banners').getPublicUrl(path);
+    const { data } = supabase.storage.from('bj-sponsor-banners').getPublicUrl(path);
     return data.publicUrl;
   };
 
   const loadRates = useCallback(async () => {
     setLoading(true);
-    const [{ data, error }, { data: settingsData }] = await Promise.all([
+    const [{ data, error }, { data: settingsData }, refsRes] = await Promise.all([
       supabase.from('exchange_rates').select('*').order('display_order', { ascending: true }),
       supabase.from('site_settings').select('*').eq('id', 'main').maybeSingle(),
+      supabase.from('usdt_reference_prices').select('*').order('currency_code', { ascending: true }),
     ]);
     setLoading(false);
+    if (refsRes.error) {
+      setRefsMissing(true);
+    } else {
+      setRefsMissing(false);
+      setRefPrices((refsRes.data as UsdtReferencePrice[]) ?? []);
+      setRefEdits({});
+    }
     if (error) return;
     setRates(data as ExchangeRate[]);
     if (settingsData) {
@@ -128,13 +149,21 @@ export function AdminDashboard() {
     return (usdt / ref) * (1 + margin / 100);
   };
 
+  const getRefPrice = (code: string | null | undefined): number => {
+    if (!code) return 0;
+    const edited = refEdits[code];
+    if (edited !== undefined) return parseFloat(edited) || 0;
+    return Number(refPrices.find((p) => p.currency_code === code)?.usdt_price) || 0;
+  };
+
   const handleSave = async (r: ExchangeRate) => {
     const patch = edits[r.id];
     if (!patch) return;
     setSavingId(r.id);
     const update: Record<string, unknown> = { ...patch };
-    if (patch.calculation_mode === 'AUTOMATIC') {
-      update.rate = computeAutoRate(patch);
+    const merged = { ...r, ...patch };
+    if (merged.calculation_mode === 'AUTOMATIC') {
+      update.rate = computeAutoRate(merged);
     }
     const { error } = await supabase
       .from('exchange_rates')
@@ -152,6 +181,132 @@ export function AdminDashboard() {
     });
     setEditingId(null);
     await loadRates();
+  };
+
+  const handleSaveRefsAndRecalc = async () => {
+    setSavingRefs(true);
+    setRefMsg(null);
+
+    // 1. Guardar los precios editados
+    const upserts = refPrices.map((p) => ({
+      currency_code: p.currency_code,
+      display_name: p.display_name,
+      auto_update: p.auto_update,
+      usdt_price: refEdits[p.currency_code] !== undefined ? parseFloat(refEdits[p.currency_code]) || 0 : p.usdt_price,
+    }));
+    const { error: upsertError } = await supabase.from('usdt_reference_prices').upsert(upserts);
+    if (upsertError) {
+      setSavingRefs(false);
+      setRefMsg('Error al guardar precios: ' + upsertError.message);
+      return;
+    }
+
+    // 2. Recalcular todas las tasas automáticas enlazadas a estos precios
+    const priceOf = (code: string | null) =>
+      Number(upserts.find((p) => p.currency_code === code)?.usdt_price) || 0;
+    let recalced = 0;
+    for (const r of rates) {
+      if (r.calculation_mode !== 'AUTOMATIC' || !r.auto_base_currency || !r.auto_quote_currency) continue;
+      const base = priceOf(r.auto_base_currency);
+      const quote = priceOf(r.auto_quote_currency);
+      if (base <= 0 || quote <= 0) continue;
+      const margin = Number(r.margin_percentage) || 0;
+      const newRate = (base / quote) * (1 + margin / 100);
+      const { error } = await supabase
+        .from('exchange_rates')
+        .update({ usdt_base_price: base, currency_reference_price: quote, rate: newRate })
+        .eq('id', r.id);
+      if (!error) recalced++;
+    }
+
+    setSavingRefs(false);
+    setRefMsg(`Precios guardados. ${recalced} tasa${recalced === 1 ? '' : 's'} automática${recalced === 1 ? '' : 's'} recalculada${recalced === 1 ? '' : 's'}. Recuerda "Publicar Tasas" para que se vean en la página.`);
+    await loadRates();
+  };
+
+  const handleFetchBinanceNow = async () => {
+    setSavingRefs(true);
+    setRefMsg(null);
+    const { data, error } = await supabase.rpc('update_binance_rates');
+    setSavingRefs(false);
+    if (error) {
+      setRefMsg('Error al consultar Binance: ' + error.message);
+      return;
+    }
+    const res = data as { updated_prices?: number; recalced_rates?: number } | null;
+    setRefMsg(`Binance consultado: ${res?.updated_prices ?? 0} precios actualizados, ${res?.recalced_rates ?? 0} tasas recalculadas y publicadas.`);
+    await loadRates();
+  };
+
+  const handleToggleAutoUpdate = async (p: UsdtReferencePrice) => {
+    const newVal = !p.auto_update;
+    setRefPrices((prev) => prev.map((x) => (x.currency_code === p.currency_code ? { ...x, auto_update: newVal } : x)));
+    await supabase.from('usdt_reference_prices').update({ auto_update: newVal }).eq('currency_code', p.currency_code);
+  };
+
+  const handleAddRef = async () => {
+    const code = newRef.code.trim().toUpperCase();
+    const price = parseFloat(newRef.price) || 0;
+    if (!code) return;
+    const { error } = await supabase.from('usdt_reference_prices').upsert({
+      currency_code: code,
+      display_name: newRef.name.trim() || code,
+      usdt_price: price,
+    });
+    if (error) {
+      setRefMsg('Error al agregar la moneda: ' + error.message);
+      return;
+    }
+    setNewRef({ code: '', name: '', price: '' });
+    await loadRates();
+  };
+
+  const loadSchedule = useCallback(async () => {
+    const { data } = await supabase.rpc('get_binance_schedule');
+    const s = data as { mode: string; hour_vzla?: number; minute?: number } | null;
+    if (s) {
+      setSchedule(s);
+      setSchedEdit({ mode: s.mode, hour: s.hour_vzla ?? 9, minute: s.minute ?? 0 });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isSuperadmin) loadSchedule();
+  }, [isSuperadmin, loadSchedule]);
+
+  const handleSaveSchedule = async () => {
+    setSavingSched(true);
+    setSchedMsg(null);
+    const { data, error } = await supabase.rpc('set_binance_schedule', {
+      p_mode: schedEdit.mode,
+      p_hour_vzla: schedEdit.hour,
+      p_minute: schedEdit.minute,
+    });
+    setSavingSched(false);
+    if (error) {
+      setSchedMsg('Error: ' + error.message);
+      return;
+    }
+    setSchedule(data as typeof schedule);
+    setSchedMsg('Automatización guardada.');
+    setTimeout(() => setSchedMsg(null), 3500);
+  };
+
+  const handleSaveMargins = async () => {
+    setSavingMargins(true);
+    setSchedMsg(null);
+    for (const [id, val] of Object.entries(marginEdits)) {
+      const m = parseFloat(val);
+      if (Number.isNaN(m)) continue;
+      await supabase.from('exchange_rates').update({ margin_percentage: m }).eq('id', id);
+    }
+    // Recalcular y publicar con los márgenes nuevos y los últimos precios
+    const { error } = await supabase.rpc('update_binance_rates');
+    setSavingMargins(false);
+    setMarginEdits({});
+    setSchedMsg(error ? 'Márgenes guardados, pero falló el recálculo: ' + error.message : 'Márgenes guardados y tasas recalculadas.');
+    await loadRates();
+    setTimeout(() => setSchedMsg(null), 4000);
   };
 
   const handleSaveSettings = async () => {
@@ -179,29 +334,40 @@ export function AdminDashboard() {
     setCreatingUser(true);
     setUserMessage(null);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token ?? '';
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-create-user`;
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
-        },
-        body: JSON.stringify({
-          email: userForm.email.trim(),
-          password: userForm.password,
-          display_name: userForm.display_name.trim(),
-          role: userForm.role,
-        }),
+      // Cliente aparte para no reemplazar la sesión del superadmin al registrar
+      const { createClient } = await import('@supabase/supabase-js');
+      const temp = createClient(
+        import.meta.env.VITE_SUPABASE_URL as string,
+        import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+        { auth: { persistSession: false }, db: { schema: 'bitjhoins' } },
+      );
+      const email = userForm.email.trim().toLowerCase();
+      const { data, error } = await temp.auth.signUp({
+        email,
+        password: userForm.password,
+        options: { data: { display_name: userForm.display_name.trim(), app_origin: 'bitjhoins' } },
       });
-      const data = await res.json();
-      setCreatingUser(false);
-      if (!res.ok) {
-        setUserMessage((data?.error as string) ?? 'No se pudo crear la cuenta.');
+      if (error || !data.user) {
+        setCreatingUser(false);
+        setUserMessage(error?.message?.includes('already') || error?.message?.includes('registered')
+          ? 'Ya existe una cuenta con ese correo.'
+          : 'No se pudo crear la cuenta.');
         return;
       }
+      if (!data.session) {
+        await temp.auth.signInWithPassword({ email, password: userForm.password });
+      }
+      await temp.from('user_profiles').insert({
+        user_id: data.user.id,
+        email,
+        display_name: userForm.display_name.trim(),
+        role: 'user',
+      });
+      if (userForm.role !== 'user') {
+        // Subir el rol lo hace el superadmin con su propia sesión
+        await supabase.rpc('admin_update_user_role', { p_user_id: data.user.id, p_role: userForm.role });
+      }
+      setCreatingUser(false);
       setUserForm({ email: '', password: '', display_name: '', role: 'admin' });
       setUserMessage('Cuenta creada correctamente.');
       await loadUsers();
@@ -283,7 +449,7 @@ export function AdminDashboard() {
     try {
       const url = new URL(s.image_url);
       const pathMatch = url.pathname.match(/\/sponsor-banners\/(.+)$/);
-      if (pathMatch) await supabase.storage.from('sponsor-banners').remove([decodeURIComponent(pathMatch[1])]);
+      if (pathMatch) await supabase.storage.from('bj-sponsor-banners').remove([decodeURIComponent(pathMatch[1])]);
     } catch { /* not a storage URL, ignore */ }
     await supabase.from('sponsors').delete().eq('id', s.id);
     await loadSponsors();
@@ -398,6 +564,7 @@ export function AdminDashboard() {
         {/* Tabs */}
         <div className="mb-6 flex flex-wrap gap-1.5 rounded-2xl border border-white/10 bg-navy-900/50 p-1.5">
           <TabButton active={activeTab === 'rates'} onClick={() => setActiveTab('rates')} icon={<TrendingUp size={17} />} label="Tasas de cambio" />
+          <TabButton active={activeTab === 'share'} onClick={() => setActiveTab('share')} icon={<Share2 size={17} />} label="Compartir tasa" />
           <TabButton active={activeTab === 'orders'} onClick={() => setActiveTab('orders')} icon={<ClipboardList size={17} />} label="Órdenes de cambio" />
           <TabButton active={activeTab === 'customers'} onClick={() => setActiveTab('customers')} icon={<Users size={17} />} label="Clientes registrados" />
           <TabButton active={activeTab === 'accounts'} onClick={() => setActiveTab('accounts')} icon={<Landmark size={17} />} label="Cuentas de pago" />
@@ -444,6 +611,85 @@ export function AdminDashboard() {
             {publishMsg}
           </div>
         )}
+
+        {/* Precios USDT de referencia (Binance) */}
+        <section className="card mb-6 p-5">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gold-400/15">
+                <Coins size={20} className="text-gold-400" />
+              </div>
+              <div>
+                <h2 className="font-display text-lg font-bold">Precios USDT de referencia (Binance)</h2>
+                <p className="text-sm text-white/50">
+                  Los precios se traen solos de Binance P2P cada día a las 9:00 a. m. (hora Venezuela) y las tasas automáticas se recalculan y publican con su margen. También puedes corregir un precio a mano o actualizar al instante.
+                </p>
+              </div>
+            </div>
+            {!refsMissing && (
+              <div className="flex flex-wrap gap-2">
+                <button onClick={handleFetchBinanceNow} disabled={savingRefs} className="btn-gold">
+                  {savingRefs ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                  Actualizar desde Binance ahora
+                </button>
+                <button onClick={handleSaveRefsAndRecalc} disabled={savingRefs} className="btn-primary">
+                  {savingRefs ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  Guardar manual y recalcular
+                </button>
+              </div>
+            )}
+          </div>
+
+          {refsMissing ? (
+            <p className="rounded-xl border border-gold-400/20 bg-gold-400/5 px-4 py-3 text-sm text-gold-300">
+              Falta crear la tabla de precios en la base de datos (migración <span className="font-mono">add_usdt_reference_prices</span>). Pídele al desarrollador que la aplique.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {refPrices.map((p) => (
+                  <div key={p.currency_code} className="rounded-xl border border-white/10 bg-white/[.03] p-3">
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="font-mono text-sm font-bold text-electric-300">{p.currency_code}</span>
+                      <button
+                        onClick={() => handleToggleAutoUpdate(p)}
+                        className={`rounded-md px-2 py-0.5 text-[10px] font-bold tracking-wide ${
+                          p.auto_update
+                            ? 'bg-green-500/15 text-green-400'
+                            : 'bg-white/5 text-white/30'
+                        }`}
+                        title={p.auto_update ? 'Se actualiza solo desde Binance cada día a las 9 a.m. (clic para pasar a manual)' : 'Manual (clic para activar Binance automático)'}
+                      >
+                        {p.auto_update ? 'AUTO' : 'MANUAL'}
+                      </button>
+                    </div>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      className="input-field font-mono"
+                      value={refEdits[p.currency_code] ?? String(p.usdt_price)}
+                      onChange={(e) => setRefEdits((prev) => ({ ...prev, [p.currency_code]: e.target.value }))}
+                    />
+                    <div className="mt-1 truncate text-[11px] text-white/30">
+                      {p.display_name}{p.updated_at ? ` · ${timeAgo(p.updated_at)}` : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <input className="input-field w-24" placeholder="Código" value={newRef.code} onChange={(e) => setNewRef((p) => ({ ...p, code: e.target.value }))} />
+                <input className="input-field w-52" placeholder="Nombre (opcional)" value={newRef.name} onChange={(e) => setNewRef((p) => ({ ...p, name: e.target.value }))} />
+                <input type="number" step="0.0001" className="input-field w-32 font-mono" placeholder="Precio" value={newRef.price} onChange={(e) => setNewRef((p) => ({ ...p, price: e.target.value }))} />
+                <button onClick={handleAddRef} className="btn-ghost"><Plus size={16} /> Agregar moneda</button>
+              </div>
+              {refMsg && (
+                <p className={`mt-3 rounded-lg border px-3 py-2 text-sm ${refMsg.includes('Error') ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-green-500/30 bg-green-500/10 text-green-300'}`}>
+                  {refMsg}
+                </p>
+              )}
+            </>
+          )}
+        </section>
 
         {/* Rates list */}
         <div className="space-y-3">
@@ -539,8 +785,42 @@ export function AdminDashboard() {
                         {eff.calculation_mode === 'AUTOMATIC' && (
                           <div className="rounded-xl border border-electric-400/20 bg-electric-500/5 p-3">
                             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-electric-300">
-                              Cálculo automático
+                              Cálculo automático — tasa = precio(base) ÷ precio(destino) ± margen
                             </p>
+                            {!refsMissing && refPrices.length > 0 && (
+                              <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                <Field label="Moneda base (Binance)">
+                                  <select
+                                    className="input-field"
+                                    value={eff.auto_base_currency ?? ''}
+                                    onChange={(e) => {
+                                      const code = e.target.value || null;
+                                      setEdit(r.id, { auto_base_currency: code, usdt_base_price: getRefPrice(code) });
+                                    }}
+                                  >
+                                    <option value="">— manual —</option>
+                                    {refPrices.map((p) => (
+                                      <option key={p.currency_code} value={p.currency_code}>{p.currency_code} · {formatNumber(p.usdt_price, 4)}</option>
+                                    ))}
+                                  </select>
+                                </Field>
+                                <Field label="Moneda destino (Binance)">
+                                  <select
+                                    className="input-field"
+                                    value={eff.auto_quote_currency ?? ''}
+                                    onChange={(e) => {
+                                      const code = e.target.value || null;
+                                      setEdit(r.id, { auto_quote_currency: code, currency_reference_price: getRefPrice(code) });
+                                    }}
+                                  >
+                                    <option value="">— manual —</option>
+                                    {refPrices.map((p) => (
+                                      <option key={p.currency_code} value={p.currency_code}>{p.currency_code} · {formatNumber(p.usdt_price, 4)}</option>
+                                    ))}
+                                  </select>
+                                </Field>
+                              </div>
+                            )}
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                               <Field label="USDT precio base">
                                 <input
@@ -674,6 +954,8 @@ export function AdminDashboard() {
           </>
         )}
 
+        {activeTab === 'share' && <ShareStory rates={rates} settings={settings} onSettingsChange={loadRates} />}
+
         {activeTab === 'orders' && <AdminOrders />}
         {activeTab === 'customers' && <AdminCustomers />}
         {activeTab === 'accounts' && <AdminPaymentAccounts />}
@@ -698,6 +980,85 @@ export function AdminDashboard() {
               <button onClick={handleSaveSettings} disabled={savingSettings} className="btn-primary h-[46px] px-5">
                 {savingSettings ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Guardar datos
               </button>
+            </div>
+          </section>
+
+          <section className="card mb-6 p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gold-400/15">
+                  <RefreshCw size={20} className="text-gold-400" />
+                </div>
+                <div>
+                  <h2 className="font-display text-lg font-bold">Automatización de tasas (Binance)</h2>
+                  <p className="text-sm text-white/50">Cuándo se consultan los precios de Binance y qué margen se aplica a cada ruta. Todo en hora de Venezuela.</p>
+                </div>
+              </div>
+              <span className="badge bg-gold-400/15 text-gold-300">Superadministrador</span>
+            </div>
+
+            <div className="mb-5 grid gap-4 rounded-xl border border-white/10 bg-white/[.03] p-4 sm:grid-cols-[auto_auto_auto_1fr] sm:items-end">
+              <Field label="Frecuencia">
+                <select className="input-field" value={schedEdit.mode} onChange={(e) => setSchedEdit((p) => ({ ...p, mode: e.target.value }))}>
+                  <option value="daily">Una vez al día</option>
+                  <option value="hourly">Cada hora</option>
+                  <option value="off">Apagada (solo manual)</option>
+                </select>
+              </Field>
+              {schedEdit.mode === 'daily' && (
+                <Field label="Hora (Venezuela)">
+                  <select className="input-field" value={schedEdit.hour} onChange={(e) => setSchedEdit((p) => ({ ...p, hour: parseInt(e.target.value) }))}>
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+              {schedEdit.mode !== 'off' && (
+                <Field label="Minuto">
+                  <select className="input-field" value={schedEdit.minute} onChange={(e) => setSchedEdit((p) => ({ ...p, minute: parseInt(e.target.value) }))}>
+                    {[0, 15, 30, 45].map((m) => <option key={m} value={m}>:{String(m).padStart(2, '0')}</option>)}
+                  </select>
+                </Field>
+              )}
+              <div className="flex items-end gap-3">
+                <button onClick={handleSaveSchedule} disabled={savingSched} className="btn-primary h-[46px] px-5">
+                  {savingSched ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Guardar
+                </button>
+                {schedule && (
+                  <span className="pb-3 text-xs text-white/40">
+                    Actual: {schedule.mode === 'off' ? 'apagada' : schedule.mode === 'hourly' ? `cada hora al minuto ${schedule.minute ?? 0}` : `diaria a las ${String(schedule.hour_vzla ?? 9).padStart(2, '0')}:${String(schedule.minute ?? 0).padStart(2, '0')} (Vzla)`}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <p className="mb-2 text-sm font-semibold text-white/70">Márgenes por ruta (%)</p>
+            <p className="mb-3 text-xs text-white/40">Positivo suma, negativo resta (ej. Colombia +8, Zelle −10). Al guardar se recalculan y publican todas las tasas automáticas.</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {rates.filter((r) => r.calculation_mode === 'AUTOMATIC').map((r) => (
+                <div key={r.id} className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[.03] px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{r.country}</p>
+                    <p className="text-[11px] text-white/35">{r.auto_base_currency} ÷ {r.auto_quote_currency} · tasa {formatNumber(r.rate, r.decimals)}</p>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.5"
+                    className="input-field w-24 text-right font-mono"
+                    value={marginEdits[r.id] ?? String(r.margin_percentage ?? 0)}
+                    onChange={(e) => setMarginEdits((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button onClick={handleSaveMargins} disabled={savingMargins || Object.keys(marginEdits).length === 0} className="btn-gold">
+                {savingMargins ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Guardar márgenes y recalcular
+              </button>
+              {schedMsg && (
+                <span className={`text-sm ${schedMsg.includes('Error') || schedMsg.includes('falló') ? 'text-red-300' : 'text-green-300'}`}>{schedMsg}</span>
+              )}
             </div>
           </section>
 

@@ -1,0 +1,4 @@
+-- Aplicada en jkbahenaqcoxmtddpfbg el 29-ago via MCP; queda para el historial.
+--   bitjhoins.site_settings + logo_url text
+--   bitjhoins.site_settings + share_design jsonb (diseño guardado del editor)
+--   bucket publico `bj-brand` + politicas (lee cualquiera, escribe quien inicio sesion)
